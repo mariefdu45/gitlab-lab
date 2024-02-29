@@ -1,0 +1,29 @@
+stages:
+  - build
+  - test
+build mf-web-site:
+  stage: build
+  image: node:21 # same version as local
+  script:
+    - npm install # install dependencies
+    - npm install -g gatsby-cli
+    - gatsby build # compilation du code
+  artifacts:
+    paths:
+      - ./public # les fichiers générés à transmettre une fois le job terminé
+test artifact:
+  stage: test
+  image: alpine
+  script:
+    - grep -q "Gatsby" ./public/index.html 
+test website:  
+  stage: test
+  image: node:21
+  script:
+    - npm install # install dependencies
+    - npm install -g gatsby-cli
+    - gatsby serve & # serve in a background
+    - sleep 3 # wait a little bit
+    - curl "http://localhost:9000" | tac | tac | grep -q "Gatsby" # reverse result twice is a way to wait for a full result
+
+    
