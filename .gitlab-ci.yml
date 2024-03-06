@@ -1,9 +1,11 @@
 stages:
   - build
   - test
+  - deploy
+  - check
+image: node:21 # default image, same version node as local
 build mf-web-site:
   stage: build
-  image: node:21 # same version as local
   script:
     - npm install # install dependencies
     - npm install -g gatsby-cli
@@ -17,13 +19,26 @@ test artifact:
   script:
     - grep -q "Gatsby" ./public/index.html 
 test website:  
-  stage: test
-  image: node:21
+  stage: test # Adding a job with the same stahe means they run in parallel
   script:
     - npm install # install dependencies
     - npm install -g gatsby-cli
     - gatsby serve & # serve in a background
     - sleep 3 # wait a little bit
     - curl "http://localhost:9000" | tac | tac | grep -q "Gatsby" # reverse result twice is a way to wait for a full result
+deploy website to surge:
+  stage: deploy
+  script:
+    - npm install -g surge
+    - surge --project ./public --domain mf-website.surge.sh
+test website deployed with surge:
+  stage: check
+  image: alpine
+  script:
+    - apk update
+    - apk add curl
+    - sleep 3
+    - curl -s "https://mf-website.surge.sh" | tac | tac | grep "Gatsby"
+
 
     
