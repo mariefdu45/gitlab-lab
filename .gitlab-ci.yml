@@ -1,44 +1,119 @@
 stages:
   - build
   - test
-  - deploy
-  - check
+  - deploy review
+  - deploy staging
+  - deploy production
+  - production tests
+
 image: node:21 # default image, same version node as local
-build mf-web-site:
+cache: # This is a global cache
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - ./node_modules
+ # policy: pull
+variables:
+  STAGING_DOMAIN: mf-website-staging.surge.sh
+  PRODUCTION_DOMAIN: mf-website.surge.sh
+
+build website:
   stage: build
-  script:
+  rules: # Only and Excepts has been replaced by rules
+    - when: on_success # If previous jobs succeded
+  before_script: # It isn't mandatory, instructions could be in script part. It's more readable with, isn't it ?
     - npm install # install dependencies
-    - npm install -g gatsby-cli
-    - gatsby build # compilation du code
+    - npm install -g gatsby-cli   
+  script:
+    - gatsby build #  code is compiled
   artifacts:
     paths:
-      - ./public # les fichiers générés à transmettre une fois le job terminé
-test artifact:
-  stage: test
+      - ./public # files needed for the next job
+
+test artifact: # With a dot, this stage will not be executed
+  stage: test 
+  rules:
+    - when: on_success
   image: alpine
+  #cache: {}
   script:
     - grep -q "Gatsby" ./public/index.html 
+
 test website:  
-  stage: test # Adding a job with the same stahe means they run in parallel
+  stage: test # Adding a job with the same stage means they run in parallel
+  rules:
+    - when: on_success
   script:
     - npm install # install dependencies
     - npm install -g gatsby-cli
     - gatsby serve & # serve in a background
     - sleep 3 # wait a little bit
     - curl "http://localhost:9000" | tac | tac | grep -q "Gatsby" # reverse result twice is a way to wait for a full result
-deploy website to surge:
-  stage: deploy
+
+deploy review:
+  stage: deploy review
+  environment:
+    name: review/$CI_COMMIT_REF_NAME # It is interesting to create environments for other people than developpers for testing new functionamities before they are merged. 
+    # The name is the one of the branch.
+    url: https://mf-website.$CI_ENVIRONMENT_SLUG.surge.sh
+    on_stop: stop review
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
   script:
     - npm install -g surge
-    - surge --project ./public --domain mf-website.surge.sh
-test website deployed with surge:
-  stage: check
-  image: alpine
+    - surge --project ./public --domain mf-website.$CI_ENVIRONMENT_SLUG.surge.sh # The surge website will be The simplified version of the environment name.
+stop review:
+  stage: deploy review
+  variables:
+    GIT_STRATEGY: none #The job doesn't need to clone the repository.
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    action: stop # environment is deleted on this job
   script:
-    - apk update
-    - apk add curl
-    - sleep 3
-    - curl -s "https://mf-website.surge.sh" | tac | tac | grep "Gatsby"
+    - npm install -g surge
+    - surge teardown mf-website.$CI_ENVIRONMENT_SLUG.surge.sh
+
+.deploy_template: &deploy # Create an anchor because all this template is common to staging, production and could be review  too
+  environment:
+    url: http://$DOMAIN
+  cache: {}
+  script:
+    - npm install -g surge
+    - surge --project ./public --domain $DOMAIN
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+deploy staging:
+  <<: *deploy # use deploy_template
+  stage: deploy staging
+  variables:
+    DOMAIN: $STAGING_DOMAIN
+  environment:
+    name: staging
 
 
-    
+deploy production:
+  <<: *deploy # use deploy_template
+  stage: deploy production
+  variables:
+    DOMAIN: $SPRODUCTION_DOMAIN
+  environment:
+    name: production
+  rules:
+    - when: manual # Need a human validation
+  allow_failure: false # otherwise, pipeline will continue with the next jobs
+ 
+production tests:
+  stage: production tests
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  environment:
+    name: production
+    url: https://$PRODUCTION_DOMAIN  # $url is empty, why ?
+  image: alpine
+  cache: {}
+  script:
+    - apk add --no-cache curl # with --no-cache option, doesn't need update;add and remove cache content
+    - curl -s https://$PRODUCTION_DOMAIN | tac | tac | grep "Gatsby" # curl $url doesn't work !
